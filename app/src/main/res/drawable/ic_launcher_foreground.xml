@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+        Adaptive icon canvas = 108dp x 108dp
+        Safe zone (never clipped) = central 72dp x 72dp
+        Logo sits at 66dp centred → 21dp inset on each side → comfortably inside safe zone
+    -->
+    <item
+        android:drawable="@drawable/wpc_logo"
+        android:gravity="center"
+        android:width="66dp"
+        android:height="66dp" />
+</layer-list>

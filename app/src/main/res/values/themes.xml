@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Compose handles all theming at runtime. This XML theme only needs to
+        hide the legacy action bar and prevent a white flash on launch.
+        Theme.AppCompat.NoActionBar is always available regardless of SDK level.
+    -->
+    <style name="Theme.WPCBroadsheet" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>
