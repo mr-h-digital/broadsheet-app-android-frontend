@@ -146,6 +146,7 @@ fun WpcNavHost(
         // ── Edit Profile ──────────────────────────────────────────────────────
         composable(Routes.EDIT_PROFILE) {
             EditProfileScreen(
+                userRepository = userRepository,
                 onNavigateBack = { navController.popBackStack() },
                 onSaved        = { navController.popBackStack() },
             )
