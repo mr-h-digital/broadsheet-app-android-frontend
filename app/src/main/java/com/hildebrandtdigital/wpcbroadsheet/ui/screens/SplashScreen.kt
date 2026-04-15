@@ -293,18 +293,30 @@ fun SplashScreen(onFinished: () -> Unit) {
             }
         }
 
-        // Version tag at bottom
-        Text(
-            text     = "v1.0.0 · Hildebrandt Digital",
-            style    = MaterialTheme.typography.labelSmall.copy(
-                color    = if (c.isDark) c.textDim else Color.White.copy(alpha = 0.50f),
-                fontSize = 10.sp,
-            ),
+        // Developer branding at bottom
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp)
+                .padding(bottom = 28.dp)
                 .graphicsLayer { alpha = taglineAlpha }
-        )
+        ) {
+            Image(
+                painter            = painterResource(R.drawable.mrhdigital_logo),
+                contentDescription = "Mr. H Digital",
+                modifier           = Modifier
+                    .height(28.dp)
+                    .graphicsLayer { alpha = if (c.isDark) 0.75f else 0.65f },
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text     = "v1.0.0",
+                style    = MaterialTheme.typography.labelSmall.copy(
+                    color    = if (c.isDark) c.textDim else Color.White.copy(alpha = 0.45f),
+                    fontSize = 10.sp,
+                ),
+            )
+        }
     }
 }
 

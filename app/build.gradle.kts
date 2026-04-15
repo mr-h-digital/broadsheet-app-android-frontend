@@ -1,7 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    id("com.google.devtools.ksp") version "2.3.5"
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -65,8 +65,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
 
-    // Icons Extended
-    implementation("androidx.compose.material:material-icons-extended:1.7.8")
+    // Icons Extended (BOM-managed — no version needed)
+    implementation("androidx.compose.material:material-icons-extended")
 
     // DataStore (for local persistence)
     implementation("androidx.datastore:datastore-preferences:1.2.0")
@@ -84,7 +84,7 @@ dependencies {
 
     // REQUIRED for Theme.Material3.*
     implementation("com.google.android.material:material:1.13.0")
-    implementation("androidx.work:work-runtime-ktx:2.10.2")
+    implementation(libs.androidx.work.runtime.ktx)
     implementation("io.coil-kt:coil-compose:2.7.0")
 
     // Retrofit + OkHttp

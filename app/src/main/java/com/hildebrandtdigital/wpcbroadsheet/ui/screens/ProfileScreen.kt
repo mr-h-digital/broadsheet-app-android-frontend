@@ -14,6 +14,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
+import com.hildebrandtdigital.wpcbroadsheet.R
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -392,12 +395,27 @@ fun ProfileScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                Text(
-                    text      = "WPC Broadsheet Manager v1.0.0\n© 2026 Hildebrandt Digital",
-                    style     = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier  = Modifier.fillMaxWidth().padding(bottom = 20.dp),
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+                ) {
+                    Text(
+                        text      = "WPC Broadsheet Manager v1.0.0",
+                        style     = MaterialTheme.typography.labelSmall.copy(
+                            color    = c.textDim,
+                            fontSize = 11.sp,
+                        ),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Image(
+                        painter            = painterResource(R.drawable.mrhdigital_logo),
+                        contentDescription = "Mr. H Digital",
+                        modifier           = Modifier
+                            .height(24.dp)
+                            .graphicsLayer { alpha = if (c.isDark) 0.65f else 0.55f },
+                    )
+                }
             }
         }
     }
