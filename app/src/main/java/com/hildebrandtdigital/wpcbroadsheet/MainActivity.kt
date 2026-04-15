@@ -15,7 +15,9 @@ import com.hildebrandtdigital.wpcbroadsheet.data.repository.NotificationPreferen
 import com.hildebrandtdigital.wpcbroadsheet.data.repository.ResidentRepository
 import com.hildebrandtdigital.wpcbroadsheet.data.repository.SiteRepository
 import com.hildebrandtdigital.wpcbroadsheet.data.repository.ThemePreferences
+import com.hildebrandtdigital.wpcbroadsheet.data.network.ApiClient
 import com.hildebrandtdigital.wpcbroadsheet.data.network.AuthTokenStore
+import com.hildebrandtdigital.wpcbroadsheet.data.repository.AppSession
 import com.hildebrandtdigital.wpcbroadsheet.data.repository.UserRepository
 import com.hildebrandtdigital.wpcbroadsheet.navigation.WpcNavHost
 import com.hildebrandtdigital.wpcbroadsheet.ui.theme.WPCBroadsheetTheme
@@ -33,6 +35,38 @@ class MainActivity : ComponentActivity() {
         val db                 = AppDatabase.get(applicationContext)
         val tokenStore         = AuthTokenStore.getInstance(applicationContext)
         val userRepository     = UserRepository(db.userDao(), tokenStore)
+
+        // Wire the token provider so ApiClient always sends the current JWT
+        ApiClient.setTokenProvider { kotlinx.coroutines.runBlocking { tokenStore.getToken() } }
+
+        // Restore session: if a JWT was persisted from a previous launch, call
+        // /api/auth/me to re-validate it and repopulate AppSession without
+        // forcing the user to log in again.
+        lifecycleScope.launch(Dispatchers.IO) {
+            val token = tokenStore.getToken()
+            if (token != null && !AppSession.isLoggedIn) {
+                try {
+                    val response = ApiClient.wpcApi.me()
+                    if (response.isSuccessful) {
+                        val apiUser = response.body()!!
+                        val user = com.hildebrandtdigital.wpcbroadsheet.data.model.User(
+                            id     = apiUser.id,
+                            name   = apiUser.name,
+                            email  = apiUser.email,
+                            role   = com.hildebrandtdigital.wpcbroadsheet.data.model.UserRole.valueOf(apiUser.role),
+                            phone  = apiUser.phone,
+                            siteId = apiUser.siteId,
+                        )
+                        AppSession.login(user)
+                    } else {
+                        // Token rejected — clear it so the user is prompted to log in
+                        tokenStore.clearToken()
+                    }
+                } catch (_: Exception) {
+                    // Network unavailable — session stays unauthenticated; login screen handles it
+                }
+            }
+        }
         val siteRepository     = SiteRepository(db.siteDao())
         val residentRepository = ResidentRepository(db.residentDao(), db.residentAuditDao())
         val mealRepository     = MealRepository(db.mealEntryDao(), db.mealPricingDao())

@@ -1,5 +1,7 @@
 package com.hildebrandtdigital.wpcbroadsheet.data.network
 
+import com.hildebrandtdigital.wpcbroadsheet.BuildConfig
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -8,17 +10,38 @@ import java.util.concurrent.TimeUnit
 
 object ApiClient {
 
-    // ── Base URL ──────────────────────────────────────────────────────────────
-    // 10.0.2.2 is the Android emulator's alias for localhost on the host machine.
-    // Change to your server IP when deploying to a real device or server.
-    private const val BASE_URL = "http://10.0.2.2:8080/"
+    private const val BASE_URL = "https://web-production-927ff.up.railway.app/"
 
-    // ── OkHttp ────────────────────────────────────────────────────────────────
-    private val loggingInterceptor = HttpLoggingInterceptor().apply {
-        level = HttpLoggingInterceptor.Level.BODY
+    // ── Auth interceptor ──────────────────────────────────────────────────────
+    // Holds a reference to the token provider so the interceptor always uses
+    // the current token without needing to be rebuilt.
+    private var tokenProvider: (() -> String?)? = null
+
+    fun setTokenProvider(provider: () -> String?) {
+        tokenProvider = provider
     }
 
+    private val authInterceptor = Interceptor { chain ->
+        val token = tokenProvider?.invoke()
+        val request = if (token != null) {
+            chain.request().newBuilder()
+                .header("Authorization", "Bearer $token")
+                .build()
+        } else {
+            chain.request()
+        }
+        chain.proceed(request)
+    }
+
+    // ── Logging (debug builds only) ───────────────────────────────────────────
+    private val loggingInterceptor = HttpLoggingInterceptor().apply {
+        level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY
+                else                   HttpLoggingInterceptor.Level.NONE
+    }
+
+    // ── OkHttp ────────────────────────────────────────────────────────────────
     private val okHttpClient = OkHttpClient.Builder()
+        .addInterceptor(authInterceptor)
         .addInterceptor(loggingInterceptor)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)

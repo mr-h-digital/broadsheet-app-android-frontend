@@ -1,5 +1,6 @@
 package com.hildebrandtdigital.wpcbroadsheet.data.repository
 
+import android.util.Log
 import com.hildebrandtdigital.wpcbroadsheet.data.db.MealEntryDao
 import com.hildebrandtdigital.wpcbroadsheet.data.db.MealPricingDao
 import com.hildebrandtdigital.wpcbroadsheet.data.db.MealEntryEntity
@@ -8,8 +9,13 @@ import com.hildebrandtdigital.wpcbroadsheet.data.db.RoomConverters
 import com.hildebrandtdigital.wpcbroadsheet.data.model.MealEntry
 import com.hildebrandtdigital.wpcbroadsheet.data.model.MealPricing
 import com.hildebrandtdigital.wpcbroadsheet.data.model.MealType
+import com.hildebrandtdigital.wpcbroadsheet.data.network.ApiClient
+import com.hildebrandtdigital.wpcbroadsheet.data.network.ApiMealEntry
+import com.hildebrandtdigital.wpcbroadsheet.data.network.ApiMealPricing
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+
+private const val TAG = "MealRepository"
 
 /**
  * Single source of truth for meal capture data and pricing configuration.
@@ -28,6 +34,62 @@ class MealRepository(
 ) {
 
     private val converters = RoomConverters()
+
+    // ── API Sync ──────────────────────────────────────────────────────────────
+
+    /**
+     * Pull all meal entries for a site/month from the API and write to Room.
+     */
+    suspend fun syncEntriesFromApi(siteId: String, year: Int, month: Int) {
+        try {
+            val response = ApiClient.wpcApi.getMealEntries(siteId, year, month)
+            if (response.isSuccessful) {
+                val entries = response.body() ?: return
+                val now = System.currentTimeMillis()
+                entries.forEach { api ->
+                    mealEntryDao.upsert(
+                        MealEntryEntity(
+                            siteId         = api.siteId,
+                            unitNumber     = api.unitNumber,
+                            year           = api.year,
+                            month          = api.month,
+                            countsJson     = converters.mealCountsToJson(
+                                api.counts.mapKeys { (k, _) ->
+                                    runCatching { MealType.valueOf(k) }.getOrNull()
+                                }.filterKeys { it != null }
+                                 .mapKeys { it.key!! }
+                            ),
+                            lastModifiedAt = now,
+                            lastModifiedBy = "api",
+                        )
+                    )
+                }
+                Log.d(TAG, "Synced ${entries.size} meal entries from API ($siteId $year/$month)")
+            } else {
+                Log.w(TAG, "Meal entry sync failed: HTTP ${response.code()}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Meal entry sync skipped (offline): ${e.message}")
+        }
+    }
+
+    /**
+     * Pull pricing for a site/month from the API and write to Room.
+     */
+    suspend fun syncPricingFromApi(siteId: String, year: Int, month: Int) {
+        try {
+            val response = ApiClient.wpcApi.getPricing(siteId, year, month)
+            if (response.isSuccessful) {
+                val api = response.body() ?: return
+                mealPricingDao.upsert(api.toEntity())
+                Log.d(TAG, "Synced pricing from API ($siteId $year/$month)")
+            } else {
+                Log.w(TAG, "Pricing sync failed: HTTP ${response.code()}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Pricing sync skipped (offline): ${e.message}")
+        }
+    }
 
     // ── Meal Entries ──────────────────────────────────────────────────────────
 
@@ -76,17 +138,31 @@ class MealRepository(
             counts.filter { it.value > 0 }
         }
 
-        mealEntryDao.upsert(
-            MealEntryEntity(
-                siteId         = siteId,
-                unitNumber     = unitNumber,
-                year           = year,
-                month          = month,
-                countsJson     = converters.mealCountsToJson(merged),
-                lastModifiedAt = now,
-                lastModifiedBy = actor,
-            )
+        val entity = MealEntryEntity(
+            siteId         = siteId,
+            unitNumber     = unitNumber,
+            year           = year,
+            month          = month,
+            countsJson     = converters.mealCountsToJson(merged),
+            lastModifiedAt = now,
+            lastModifiedBy = actor,
         )
+        mealEntryDao.upsert(entity)
+
+        // Push to API (fire-and-forget; Room is already updated)
+        try {
+            ApiClient.wpcApi.saveMealEntry(
+                ApiMealEntry(
+                    unitNumber = unitNumber,
+                    siteId     = siteId,
+                    year       = year,
+                    month      = month,
+                    counts     = merged.mapKeys { it.key.name },
+                )
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Push meal entry to API failed (will retry on next sync): ${e.message}")
+        }
     }
 
     /**
@@ -150,35 +226,41 @@ class MealRepository(
         pricing: MealPricing,
         actor  : String,
     ) {
-        val now = System.currentTimeMillis()
-        mealPricingDao.upsert(
-            MealPricingEntity(
-                siteId                   = siteId,
-                year                     = year,
-                month                    = month,
-                course1                  = pricing.course1,
-                course2                  = pricing.course2,
-                course3                  = pricing.course3,
-                fullBoard                = pricing.fullBoard,
-                sun1Course               = pricing.sun1Course,
-                sun3Course               = pricing.sun3Course,
-                breakfast                = pricing.breakfast,
-                dinner                   = pricing.dinner,
-                soupDessert              = pricing.soupDessert,
-                visitorMonSat            = pricing.visitorMonSat,
-                visitorSun1              = pricing.visitorSun1,
-                visitorSun3              = pricing.visitorSun3,
-                taBakkies                = pricing.taBakkies,
-                vatRate                  = pricing.vatRate,
-                compulsoryMealsDeduction = pricing.compulsoryMealsDeduction,
-                lastModifiedAt           = now,
-                lastModifiedBy           = actor,
-                lastSyncedAt             = null,   // dirty until backend acks
-            )
+        val now      = System.currentTimeMillis()
+        val apiPricing = ApiMealPricing(
+            siteId                   = siteId,
+            year                     = year,
+            month                    = month,
+            course1                  = pricing.course1,
+            course2                  = pricing.course2,
+            course3                  = pricing.course3,
+            fullBoard                = pricing.fullBoard,
+            sun1Course               = pricing.sun1Course,
+            sun3Course               = pricing.sun3Course,
+            breakfast                = pricing.breakfast,
+            dinner                   = pricing.dinner,
+            soupDessert              = pricing.soupDessert,
+            visitorMonSat            = pricing.visitorMonSat,
+            visitorSun1              = pricing.visitorSun1,
+            visitorSun3              = pricing.visitorSun3,
+            taBakkies                = pricing.taBakkies,
+            vatRate                  = pricing.vatRate,
+            compulsoryMealsDeduction = pricing.compulsoryMealsDeduction,
         )
-        // Also update the in-memory SampleData map so screens not yet wired
-        // to Room still see the new values during the transition period
+        mealPricingDao.upsert(apiPricing.toEntity())
         SampleData.savePricing(siteId, pricing)
+
+        // Push to API
+        try {
+            val response = ApiClient.wpcApi.savePricing(apiPricing)
+            if (response.isSuccessful) {
+                markPricingSynced(siteId, year, month)
+            } else {
+                Log.w(TAG, "Push pricing to API failed: HTTP ${response.code()}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Push pricing to API failed (offline): ${e.message}")
+        }
     }
 
     /**
@@ -205,6 +287,30 @@ class MealRepository(
         month      = month,
         day        = 0,     // aggregate row; per-day detail is future work
         counts     = converters.jsonToMealCounts(countsJson),
+    )
+
+    private fun ApiMealPricing.toEntity() = MealPricingEntity(
+        siteId                   = siteId,
+        year                     = year,
+        month                    = month,
+        course1                  = course1,
+        course2                  = course2,
+        course3                  = course3,
+        fullBoard                = fullBoard,
+        sun1Course               = sun1Course,
+        sun3Course               = sun3Course,
+        breakfast                = breakfast,
+        dinner                   = dinner,
+        soupDessert              = soupDessert,
+        visitorMonSat            = visitorMonSat,
+        visitorSun1              = visitorSun1,
+        visitorSun3              = visitorSun3,
+        taBakkies                = taBakkies,
+        vatRate                  = vatRate,
+        compulsoryMealsDeduction = compulsoryMealsDeduction,
+        lastModifiedAt           = System.currentTimeMillis(),
+        lastModifiedBy           = "api",
+        lastSyncedAt             = System.currentTimeMillis(),
     )
 
     private fun MealPricingEntity.toDomain(): MealPricing = MealPricing(

@@ -1,5 +1,6 @@
 package com.hildebrandtdigital.wpcbroadsheet.data.repository
 
+import android.util.Log
 import com.hildebrandtdigital.wpcbroadsheet.data.db.ResidentDao
 import com.hildebrandtdigital.wpcbroadsheet.data.db.ResidentAuditDao
 import com.hildebrandtdigital.wpcbroadsheet.data.db.AuditAction
@@ -7,9 +8,15 @@ import com.hildebrandtdigital.wpcbroadsheet.data.db.ResidentAuditEntity
 import com.hildebrandtdigital.wpcbroadsheet.data.db.ResidentEntity
 import com.hildebrandtdigital.wpcbroadsheet.data.model.Resident
 import com.hildebrandtdigital.wpcbroadsheet.data.model.ResidentType
+import com.hildebrandtdigital.wpcbroadsheet.data.network.ApiClient
+import com.hildebrandtdigital.wpcbroadsheet.data.network.ApiResident
+import com.hildebrandtdigital.wpcbroadsheet.data.network.RelocateRequest
+import com.hildebrandtdigital.wpcbroadsheet.data.network.ResidentRequest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.time.Instant
+
+private const val TAG = "ResidentRepository"
 
 /**
  * Single source of truth for resident data.
@@ -28,6 +35,30 @@ class ResidentRepository(
     private val residentDao  : ResidentDao,
     private val auditDao     : ResidentAuditDao,
 ) {
+
+    // ── API Sync ──────────────────────────────────────────────────────────────
+
+    /**
+     * Pull residents for a site from the API and write them into Room.
+     * Pass null [siteId] to sync all sites (cross-site access).
+     */
+    suspend fun syncFromApi(siteId: String?, includeInactive: Boolean = false) {
+        try {
+            val response = ApiClient.wpcApi.getResidents(siteId, includeInactive)
+            if (response.isSuccessful) {
+                val residents = response.body() ?: return
+                val now = System.currentTimeMillis()
+                residents.forEach { api ->
+                    residentDao.upsert(api.toEntity(now))
+                }
+                Log.d(TAG, "Synced ${residents.size} residents from API (siteId=$siteId)")
+            } else {
+                Log.w(TAG, "Resident sync failed: HTTP ${response.code()}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Resident sync skipped (offline): ${e.message}")
+        }
+    }
 
     // ── Observe ──────────────────────────────────────────────────────────────
 
@@ -74,12 +105,23 @@ class ResidentRepository(
     // ── Mutations ────────────────────────────────────────────────────────────
 
     /**
-     * Add a brand-new resident.
-     * Writes the resident row and a CREATED audit entry atomically.
+     * Add a brand-new resident — posts to API first, then caches in Room.
      */
     suspend fun addResident(resident: Resident, actor: String) {
         val now = System.currentTimeMillis()
-        residentDao.upsert(resident.toEntity(createdBy = actor, createdAt = now, modifiedBy = actor, modifiedAt = now))
+        try {
+            val response = ApiClient.wpcApi.createResident(resident.toRequest())
+            if (response.isSuccessful) {
+                response.body()?.let { residentDao.upsert(it.toEntity(now)) }
+                Log.d(TAG, "Created resident via API: ${resident.unitNumber}")
+            } else {
+                Log.w(TAG, "Create resident API failed: HTTP ${response.code()}")
+                residentDao.upsert(resident.toEntity(createdBy = actor, createdAt = now, modifiedBy = actor, modifiedAt = now))
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Create resident offline fallback: ${e.message}")
+            residentDao.upsert(resident.toEntity(createdBy = actor, createdAt = now, modifiedBy = actor, modifiedAt = now))
+        }
         auditDao.insert(
             ResidentAuditEntity(
                 siteId     = resident.siteId,
@@ -93,20 +135,26 @@ class ResidentRepository(
     }
 
     /**
-     * Update an existing resident's details (name, type, occupant count).
-     * Does NOT change siteId — use [relocateResident] for that.
+     * Update an existing resident's details — puts to API first, then updates Room.
      */
     suspend fun updateResident(updated: Resident, actor: String) {
         val now      = System.currentTimeMillis()
         val existing = residentDao.find(updated.siteId, updated.unitNumber)
-        residentDao.upsert(
-            updated.toEntity(
-                createdBy  = existing?.createdBy  ?: actor,
-                createdAt  = existing?.createdAt  ?: now,
-                modifiedBy = actor,
-                modifiedAt = now,
+        try {
+            val response = ApiClient.wpcApi.updateResident(
+                updated.siteId, updated.unitNumber, updated.toRequest()
             )
-        )
+            if (response.isSuccessful) {
+                response.body()?.let { residentDao.upsert(it.toEntity(now)) }
+                Log.d(TAG, "Updated resident via API: ${updated.unitNumber}")
+            } else {
+                Log.w(TAG, "Update resident API failed: HTTP ${response.code()}")
+                residentDao.upsert(updated.toEntity(createdBy = existing?.createdBy ?: actor, createdAt = existing?.createdAt ?: now, modifiedBy = actor, modifiedAt = now))
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Update resident offline fallback: ${e.message}")
+            residentDao.upsert(updated.toEntity(createdBy = existing?.createdBy ?: actor, createdAt = existing?.createdAt ?: now, modifiedBy = actor, modifiedAt = now))
+        }
         auditDao.insert(
             ResidentAuditEntity(
                 siteId     = updated.siteId,
@@ -120,15 +168,6 @@ class ResidentRepository(
 
     /**
      * Move a resident from one site to another.
-     *
-     * What happens under the hood:
-     * 1. The old (fromSiteId, unitNumber) row is deleted.
-     * 2. A new (toSiteId, unitNumber) row is inserted, preserving createdBy/At.
-     * 3. A RELOCATED audit entry is written against the FROM site so the
-     *    origin site's history records the departure.
-     *
-     * Past meal entries remain tagged to [fromSiteId] — billing history is
-     * unaffected. Future captures and reports will use [toSiteId].
      */
     suspend fun relocateResident(
         resident  : Resident,
@@ -139,11 +178,19 @@ class ResidentRepository(
     ) {
         val now      = System.currentTimeMillis()
         val existing = residentDao.find(fromSiteId, resident.unitNumber)
-
-        // 1. Remove the old row
+        try {
+            val response = ApiClient.wpcApi.relocateResident(
+                fromSiteId, resident.unitNumber, RelocateRequest(toSiteId)
+            )
+            if (response.isSuccessful) {
+                Log.d(TAG, "Relocated resident via API: ${resident.unitNumber} → $toSiteId")
+            } else {
+                Log.w(TAG, "Relocate resident API failed: HTTP ${response.code()}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Relocate resident offline fallback: ${e.message}")
+        }
         residentDao.delete(fromSiteId, resident.unitNumber)
-
-        // 2. Insert under the new siteId, preserving original creation metadata
         residentDao.upsert(
             resident.copy(siteId = toSiteId).toEntity(
                 createdBy  = existing?.createdBy ?: actor,
@@ -152,8 +199,6 @@ class ResidentRepository(
                 modifiedAt = now,
             )
         )
-
-        // 3. Audit entry against FROM site — fromSiteId/toSiteId are now queryable
         auditDao.insert(
             ResidentAuditEntity(
                 siteId     = fromSiteId,
@@ -170,8 +215,6 @@ class ResidentRepository(
 
     /**
      * Soft-deactivate a resident.
-     * The row is kept for billing history; isActive = false hides them
-     * from capture and reports.
      */
     suspend fun deactivateResident(
         siteId    : String,
@@ -180,25 +223,14 @@ class ResidentRepository(
         reason    : String? = null,
     ) {
         val now = System.currentTimeMillis()
-        residentDao.setActive(
-            siteId        = siteId,
-            unitNumber    = unitNumber,
-            active        = false,
-            actor         = actor,
-            at            = now,
-            deactivatedBy = actor,
-            deactivatedAt = now,
-        )
-        auditDao.insert(
-            ResidentAuditEntity(
-                siteId     = siteId,
-                unitNumber = unitNumber,
-                action     = AuditAction.DEACTIVATED.name,
-                actor      = actor,
-                at         = now,
-                note       = reason,
-            )
-        )
+        try {
+            val response = ApiClient.wpcApi.deactivateResident(siteId, unitNumber)
+            if (!response.isSuccessful) Log.w(TAG, "Deactivate resident API failed: HTTP ${response.code()}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Deactivate resident offline fallback: ${e.message}")
+        }
+        residentDao.setActive(siteId = siteId, unitNumber = unitNumber, active = false, actor = actor, at = now, deactivatedBy = actor, deactivatedAt = now)
+        auditDao.insert(ResidentAuditEntity(siteId = siteId, unitNumber = unitNumber, action = AuditAction.DEACTIVATED.name, actor = actor, at = now, note = reason))
     }
 
     /**
@@ -210,27 +242,40 @@ class ResidentRepository(
         actor     : String,
     ) {
         val now = System.currentTimeMillis()
-        residentDao.setActive(
-            siteId        = siteId,
-            unitNumber    = unitNumber,
-            active        = true,
-            actor         = actor,
-            at            = now,
-            deactivatedBy = null,
-            deactivatedAt = null,
-        )
-        auditDao.insert(
-            ResidentAuditEntity(
-                siteId     = siteId,
-                unitNumber = unitNumber,
-                action     = AuditAction.REACTIVATED.name,
-                actor      = actor,
-                at         = now,
-            )
-        )
+        try {
+            val response = ApiClient.wpcApi.reactivateResident(siteId, unitNumber)
+            if (!response.isSuccessful) Log.w(TAG, "Reactivate resident API failed: HTTP ${response.code()}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Reactivate resident offline fallback: ${e.message}")
+        }
+        residentDao.setActive(siteId = siteId, unitNumber = unitNumber, active = true, actor = actor, at = now, deactivatedBy = null, deactivatedAt = null)
+        auditDao.insert(ResidentAuditEntity(siteId = siteId, unitNumber = unitNumber, action = AuditAction.REACTIVATED.name, actor = actor, at = now))
     }
 
     // ── Mapping helpers ───────────────────────────────────────────────────────
+
+    private fun Resident.toRequest() = ResidentRequest(
+        unitNumber     = unitNumber,
+        clientName     = clientName,
+        totalOccupants = totalOccupants,
+        residentType   = residentType.name,
+        siteId         = siteId,
+    )
+
+    private fun ApiResident.toEntity(now: Long) = ResidentEntity(
+        siteId         = siteId,
+        unitNumber     = unitNumber,
+        clientName     = clientName,
+        totalOccupants = totalOccupants,
+        residentType   = ResidentType.valueOf(residentType),
+        isActive       = isActive,
+        createdBy      = createdBy,
+        createdAt      = if (createdAt.isNotBlank()) runCatching { Instant.parse(createdAt).toEpochMilli() }.getOrDefault(now) else now,
+        lastModifiedBy = lastModifiedBy,
+        lastModifiedAt = if (lastModifiedAt.isNotBlank()) runCatching { Instant.parse(lastModifiedAt).toEpochMilli() }.getOrDefault(now) else now,
+        deactivatedBy  = deactivatedBy,
+        deactivatedAt  = deactivatedAt?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() },
+    )
 
     private fun ResidentEntity.toDomain(): Resident = Resident(
         unitNumber     = unitNumber,
