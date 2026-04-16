@@ -5,6 +5,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -14,8 +15,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.*
@@ -43,10 +46,12 @@ fun LoginScreen(
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var loading  by remember { mutableStateOf(false) }
     val scope    = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
 
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .appBackground(c)
     ) {
         // Subtle radial glow centered at the top
@@ -175,6 +180,8 @@ fun LoginScreen(
                         onChange     = { email = it; errorMsg = null },
                         placeholder  = "you@wpc.co.za",
                         keyboardType = KeyboardType.Email,
+                        imeAction    = ImeAction.Next,
+                        onImeAction  = { focusManager.moveFocus(FocusDirection.Next) },
                     )
 
                     Spacer(Modifier.height(14.dp))
@@ -188,6 +195,8 @@ fun LoginScreen(
                         placeholder          = "••••••••",
                         visualTransformation = if (showPass) VisualTransformation.None
                         else PasswordVisualTransformation(),
+                        imeAction            = ImeAction.Done,
+                        onImeAction          = { focusManager.clearFocus() },
                         trailingIcon         = {
                             IconButton(onClick = { showPass = !showPass }) {
                                 Icon(
@@ -297,6 +306,8 @@ private fun WpcTextField(
     onChange             : (String) -> Unit,
     placeholder          : String,
     keyboardType         : KeyboardType         = KeyboardType.Text,
+    imeAction            : ImeAction             = ImeAction.Default,
+    onImeAction          : () -> Unit            = {},
     visualTransformation : VisualTransformation = VisualTransformation.None,
     trailingIcon         : @Composable (() -> Unit)? = null,
 ) {
@@ -307,7 +318,8 @@ private fun WpcTextField(
         modifier             = Modifier.fillMaxWidth(),
         placeholder          = { Text(placeholder, color = c.textDim) },
         visualTransformation = visualTransformation,
-        keyboardOptions      = KeyboardOptions(keyboardType = keyboardType),
+        keyboardOptions      = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
+        keyboardActions      = KeyboardActions(onAny = { onImeAction() }),
         trailingIcon         = trailingIcon,
         singleLine           = true,
         shape                = RoundedCornerShape(10.dp),

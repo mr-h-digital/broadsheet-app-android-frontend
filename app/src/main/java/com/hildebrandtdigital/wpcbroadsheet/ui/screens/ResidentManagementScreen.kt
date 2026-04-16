@@ -9,7 +9,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -633,9 +635,9 @@ private fun ResidentFormDialog(
         Surface(
             shape    = RoundedCornerShape(20.dp),
             color    = c.surface1,
-            modifier = Modifier.fillMaxWidth().border(1.dp, c.borderColor, RoundedCornerShape(20.dp))
+            modifier = Modifier.fillMaxWidth().imePadding().border(1.dp, c.borderColor, RoundedCornerShape(20.dp))
         ) {
-            Column(modifier = Modifier.padding(24.dp)) {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(24.dp)) {
                 Text(if (isEditing) "Edit Resident" else "Add Resident", style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(4.dp))
                 Text(if (isEditing) "Update resident details" else "Add a new resident", style = MaterialTheme.typography.bodyMedium.copy(color = if (c.isDark) c.textMuted else androidx.compose.ui.graphics.Color.White.copy(alpha = 0.90f)))

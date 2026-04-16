@@ -745,7 +745,7 @@ private fun EditPriceDialog(
         Surface(
             shape    = RoundedCornerShape(20.dp),
             color    = c.surface1,
-            modifier = Modifier.fillMaxWidth().border(1.dp, c.borderColor, RoundedCornerShape(20.dp))
+            modifier = Modifier.fillMaxWidth().imePadding().border(1.dp, c.borderColor, RoundedCornerShape(20.dp))
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {

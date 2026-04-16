@@ -458,6 +458,7 @@ private fun UserFormDialog(
             color = c.surface1,
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .wrapContentHeight(),
         ) {
             Column(
@@ -633,7 +634,7 @@ private fun SiteFormDialog(
         Surface(
             shape    = RoundedCornerShape(16.dp),
             color    = c.surface1,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().imePadding(),
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
